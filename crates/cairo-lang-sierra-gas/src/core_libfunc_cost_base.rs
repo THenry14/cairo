@@ -183,6 +183,26 @@ pub fn core_libfunc_precost<Ops: CostOperations>(
     }
 }
 
+/// Trait for providing extra information required for calculating costs for a specific libfunc
+/// invocation.
+pub trait ComputeCostInfoProvider {
+    /// Provides the sizes of types.
+    fn type_size(&self, ty: &ConcreteTypeId) -> usize;
+}
+
+// TODO(lior): Remove this struct once not needed.
+struct ComputeCostInfoProviderWrapper<'a, InfoProvider: InvocationCostInfoProvider> {
+    info_provider: &'a InfoProvider,
+}
+
+impl<InfoProvider: InvocationCostInfoProvider> ComputeCostInfoProvider
+    for ComputeCostInfoProviderWrapper<'_, InfoProvider>
+{
+    fn type_size(&self, ty: &ConcreteTypeId) -> usize {
+        self.info_provider.type_size(ty)
+    }
+}
+
 /// The cost of executing a libfunc for a specific output branch.
 #[derive(Clone)]
 pub enum BranchCost {
@@ -208,7 +228,7 @@ impl From<ConstCost> for BranchCost {
 /// Returns a postcost value for a libfunc - the cost of step token.
 pub fn core_libfunc_postcost(
     libfunc: &CoreConcreteLibfunc,
-    info_provider: &dyn InvocationCostInfoProvider,
+    info_provider: &dyn ComputeCostInfoProvider,
 ) -> Vec<BranchCost> {
     let steps = |value| ConstCost { steps: value, ..Default::default() };
     let holes = |value| ConstCost { holes: value, ..Default::default() };
@@ -421,7 +441,7 @@ pub fn core_libfunc_postcost_wrapper<
     libfunc: &CoreConcreteLibfunc,
     info_provider: &InfoProvider,
 ) -> Vec<Ops::CostType> {
-    let res = core_libfunc_postcost(libfunc, info_provider);
+    let res = core_libfunc_postcost(libfunc, &ComputeCostInfoProviderWrapper { info_provider });
     res.into_iter()
         .map(|cost| match cost {
             BranchCost::Constant(const_cost) => ops.const_cost(const_cost),
