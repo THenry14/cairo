@@ -2,19 +2,26 @@
 // 0. Use real costs
 // 1. Other gas tokens
 // 2. AP
+// 3. Withdraw gas builtins.
+// 4. refund gas
 
+use cairo_lang_sierra::extensions::builtin_cost::CostTokenType;
 use cairo_lang_sierra::extensions::core::{CoreLibfunc, CoreType};
 use cairo_lang_sierra::extensions::ConcreteType;
 use cairo_lang_sierra::ids::{ConcreteLibfuncId, ConcreteTypeId};
 use cairo_lang_sierra::program::{Invocation, Program, Statement, StatementIdx};
 use cairo_lang_sierra::program_registry::ProgramRegistry;
+use cairo_lang_utils::ordered_hash_map::OrderedHashMap;
 use cairo_lang_utils::unordered_hash_map::UnorderedHashMap;
 use itertools::zip_eq;
 
 use crate::core_libfunc_cost::ConstCost;
 use crate::core_libfunc_cost_base::{core_libfunc_postcost, BranchCost, ComputeCostInfoProvider};
+use crate::gas_info::GasInfo;
+use crate::CostError;
 
 type CostValue = i32;
+type VariableValues = OrderedHashMap<(StatementIdx, CostTokenType), i64>;
 
 pub struct ComputeCostInfoProviderImpl<'a> {
     registry: &'a ProgramRegistry<CoreType, CoreLibfunc>,
@@ -26,8 +33,12 @@ impl<'a> ComputeCostInfoProvider for ComputeCostInfoProviderImpl<'a> {
     }
 }
 
-pub fn compute_costs(program: &Program, registry: &ProgramRegistry<CoreType, CoreLibfunc>) {
-    let info_provider = ComputeCostInfoProviderImpl { registry };
+pub fn compute_costs(
+    program: &Program,
+    get_ap_change: &dyn Fn(&StatementIdx) -> usize,
+) -> Result<GasInfo, CostError> {
+    let registry = ProgramRegistry::<CoreType, CoreLibfunc>::new(program)?;
+    let info_provider = ComputeCostInfoProviderImpl { registry: &registry };
     let mut context = CostContext {
         program,
         costs: UnorderedHashMap::default(),
@@ -37,15 +48,31 @@ pub fn compute_costs(program: &Program, registry: &ProgramRegistry<CoreType, Cor
                 .expect("Program registry creation would have already failed.");
             core_libfunc_postcost(core_libfunc, &info_provider)
         }),
+        get_ap_change,
     };
 
     for i in 0..program.statements.len() {
         context.wallet_at(&StatementIdx(i));
     }
 
+    let mut variable_values = VariableValues::default();
     for i in 0..program.statements.len() {
-        context.analyze_gas_statements(&StatementIdx(i));
+        context.analyze_gas_statements(&StatementIdx(i), &mut variable_values);
     }
+    let function_costs = program
+        .funcs
+        .iter()
+        .map(|func| {
+            (
+                func.id.clone(),
+                vec![(CostTokenType::Const, context.wallet_at(&func.entry_point) as i64)]
+                    .into_iter()
+                    .collect(),
+            )
+        })
+        .collect();
+    let gas_info = GasInfo { variable_values, function_costs };
+    Ok(gas_info)
 }
 
 enum CostComputationStatus {
@@ -63,6 +90,7 @@ struct CostContext<'a> {
     get_cost: &'a dyn Fn(&ConcreteLibfuncId) -> Vec<BranchCost>,
     /// The cost before executing a Sierra statement.
     costs: UnorderedHashMap<StatementIdx, CostComputationStatus>,
+    get_ap_change: &'a dyn Fn(&StatementIdx) -> usize,
 }
 impl<'a> CostContext<'a> {
     /// Returns the required value in the wallet before executing statement `idx`.
@@ -101,7 +129,14 @@ impl<'a> CostContext<'a> {
             .map(|(branch_info, branch_cost)| {
                 let branch_cost = match &*branch_cost {
                     BranchCost::Constant(val) => val.cost(),
-                    BranchCost::BranchAlign => 0,
+                    BranchCost::BranchAlign => {
+                        let ap_change = (self.get_ap_change)(idx);
+                        if ap_change == 0 {
+                            0
+                        } else {
+                            ConstCost { steps: 1, holes: ap_change as i32, range_checks: 0 }.cost()
+                        }
+                    }
                     BranchCost::FunctionCall { const_cost, function } => {
                         self.wallet_at(&function.entry_point) + const_cost.cost()
                     }
@@ -142,7 +177,7 @@ impl<'a> CostContext<'a> {
         }
     }
 
-    fn analyze_gas_statements(&mut self, idx: &StatementIdx) {
+    fn analyze_gas_statements(&mut self, idx: &StatementIdx, variable_values: &mut VariableValues) {
         let Statement::Invocation(invocation) = &self.program.get_statement(idx).unwrap() else {
             return;
         };
@@ -158,28 +193,47 @@ impl<'a> CostContext<'a> {
             // TODO: zip_eq3?
             {
                 let future_wallet_value = self.wallet_at(&idx.next(&branch_info.target));
-                if let BranchCost::WithdrawGas { const_cost, success, with_builtins: _ } =
+                if let BranchCost::WithdrawGas { const_cost, success: true, with_builtins: _ } =
                     branch_cost
                 {
-                    if *success {
-                        // TODO: with_builtins.
-                        let amount = ((const_cost.cost() + future_wallet_value) as i64)
-                            - (wallet_value as i64);
-                        println!("Withdraw amount of {:?}: {}", idx, std::cmp::max(amount, 0));
-                        println!(
-                            "Branch align of {:?}: {}",
-                            idx.next(&branch_info.target),
-                            // TODO: is this always 0? What happens if the other branch is
-                            // really small?
-                            std::cmp::max(-amount, 0)
-                        );
-                    }
+                    // TODO: with_builtins.
+                    let amount =
+                        ((const_cost.cost() + future_wallet_value) as i64) - (wallet_value as i64);
+                    // println!("Withdraw amount of {:?}: {}", idx, std::cmp::max(amount, 0));
+                    // println!(
+                    //     "Branch align of {:?}: {}",
+                    //     idx.next(&branch_info.target),
+                    //     // TODO: is this always 0? What happens if the other branch is
+                    //     // really small?
+                    //     std::cmp::max(-amount, 0)
+                    // );
+                    assert!(
+                        variable_values
+                            .insert((idx.clone(), CostTokenType::Const), std::cmp::max(amount, 0))
+                            .is_none()
+                    );
+                    assert!(
+                        variable_values
+                            .insert(
+                                (idx.next(&branch_info.target), CostTokenType::Const),
+                                std::cmp::max(-amount, 0),
+                            )
+                            .is_none()
+                    );
                 } else {
                     // TODO: Consider checking this is indeed branch align.
-                    println!(
-                        "Branch align {:?} = {}",
-                        idx.next(&branch_info.target),
-                        wallet_value - branch_requirement
+                    // println!(
+                    //     "Branch align {:?} = {}",
+                    //     idx.next(&branch_info.target),
+                    //     wallet_value - branch_requirement
+                    // );
+                    assert!(
+                        variable_values
+                            .insert(
+                                (idx.next(&branch_info.target), CostTokenType::Const),
+                                (wallet_value - branch_requirement) as i64,
+                            )
+                            .is_none()
                     );
                 }
             }

@@ -4,10 +4,11 @@ use cairo_lang_sierra::extensions::builtin_cost::CostTokenType;
 use cairo_lang_sierra::ids::FunctionId;
 use cairo_lang_sierra::program::StatementIdx;
 use cairo_lang_utils::ordered_hash_map::OrderedHashMap;
+use cairo_lang_utils::unordered_hash_map::UnorderedHashMap;
 use itertools::{chain, Itertools};
 
 /// Gas information for a Sierra program.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Default, Eq, PartialEq)]
 pub struct GasInfo {
     /// The values of variables at matching libfuncs at given statements indices.
     pub variable_values: OrderedHashMap<(StatementIdx, CostTokenType), i64>,
@@ -53,6 +54,13 @@ impl GasInfo {
             .collect();
 
         GasInfo { variable_values, function_costs }
+    }
+
+    pub fn is_eq(&self, other: &GasInfo) -> bool {
+        UnorderedHashMap::from_iter(self.variable_values.iter())
+            == UnorderedHashMap::from_iter(other.variable_values.iter())
+            && UnorderedHashMap::from_iter(self.function_costs.iter())
+                == UnorderedHashMap::from_iter(other.function_costs.iter())
     }
 }
 

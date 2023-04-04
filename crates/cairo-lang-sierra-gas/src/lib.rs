@@ -20,7 +20,7 @@ use generate_equations::StatementFutureCost;
 use itertools::Itertools;
 use thiserror::Error;
 
-mod compute_costs;
+pub mod compute_costs;
 pub mod core_libfunc_cost;
 mod core_libfunc_cost_base;
 mod core_libfunc_cost_expr;
@@ -80,8 +80,6 @@ pub fn calc_gas_precost_info(
     function_set_costs: OrderedHashMap<FunctionId, OrderedHashMap<CostTokenType, i32>>,
 ) -> Result<GasInfo, CostError> {
     let registry = ProgramRegistry::<CoreType, CoreLibfunc>::new(program)?;
-    compute_costs::compute_costs(program, &registry);
-
     calc_gas_info_inner(
         program,
         |statement_future_cost, idx, libfunc_id| -> Vec<OrderedHashMap<CostTokenType, Expr<Var>>> {

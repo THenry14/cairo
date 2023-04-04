@@ -1,8 +1,11 @@
 use cairo_lang_sierra::extensions::builtin_cost::CostTokenType;
+use cairo_lang_sierra::extensions::core::{CoreLibfunc, CoreType};
 use cairo_lang_sierra::ids::FunctionId;
 use cairo_lang_sierra::program::Program;
+use cairo_lang_sierra::program_registry::ProgramRegistry;
 use cairo_lang_sierra_ap_change::ap_change_info::ApChangeInfo;
 use cairo_lang_sierra_ap_change::{calc_ap_changes, ApChangeError};
+use cairo_lang_sierra_gas::compute_costs::compute_costs;
 use cairo_lang_sierra_gas::gas_info::GasInfo;
 use cairo_lang_sierra_gas::{calc_gas_postcost_info, calc_gas_precost_info, CostError};
 use cairo_lang_utils::ordered_hash_map::OrderedHashMap;
@@ -71,6 +74,13 @@ pub fn calc_metadata(
         calc_gas_postcost_info(program, post_function_set_costs, &pre_gas_info, |idx| {
             ap_change_info.variable_values.get(&idx).copied().unwrap_or_default()
         })?;
+    let post_gas_info2 = compute_costs(program, &|idx| {
+        ap_change_info.variable_values.get(idx).copied().unwrap_or_default()
+    })?;
+
+    println!("{:?}", post_gas_info);
+    println!("{:?}", post_gas_info2);
+    assert!(post_gas_info.is_eq(&post_gas_info2));
 
     Ok(Metadata { ap_change_info, gas_info: pre_gas_info.combine(post_gas_info) })
 }
