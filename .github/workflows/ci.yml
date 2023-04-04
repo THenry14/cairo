@@ -8,24 +8,461 @@ on:
     types: [checks_requested]
 
 jobs:
-  test:
+  detect_crates_to_test:
+    name: detect crates to test
     runs-on: ubuntu-latest
+    outputs:
+      jobs: ${{ steps.detect.outputs.jobs }}
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
+      - id: checkout
+        uses: actions/checkout@v2
+      - id: files
+        uses: jitterbit/get-changed-files@v1
         with:
-          components: rustfmt
-          toolchain: nightly-2022-11-03
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+          format: 'json'
+      - id: detect
+        run: ./.github/workflows/detect_crates_to_test.js <<<'${{ steps.files.outputs.all }}'
+
+  .test_job_use_template: &test_job_use_config
+    - uses: actions/checkout@v2
+    - uses: actions-rs/toolchain@v1
+      with:
+        components: rustfmt
+        toolchain: nightly-2022-11-03
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+
+# TODO(yg): change all to cairo-lang-*
+
+  test-casm:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-casm-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-casm-test-only') }}
+    steps:
+      - *test_job_use_config
       - run: |
-          cargo test
+          cargo test -p cairo-lang-casm
+
+  test-compiler:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-compiler-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-diagnostics-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-defs-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-filesystem-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-lowering-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-semantic-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-generator-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-syntax-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-parser-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-plugins-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-project-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-compiler-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-compiler
+
+  test-debug:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-debug-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-proc-macros-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-debug-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-debug
+
+  test-defs:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-defs-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-debug-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-diagnostics-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-filesystem-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-syntax-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-parser-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-test-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-defs-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-defs
+
+  test-diagnostics:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-diagnostics-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-filesystem-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-proc-macros-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-diagnostics-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-diagnostics
+
+  test-eq-solver:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-eq-solver-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-eq-solver-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-eq-solver
+
+  test-filesystem:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-filesystem-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-debug-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-filesystem-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-filesystem
+
+  test-formatter:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-formatter-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-diagnostics-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-filesystem-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-parser-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-syntax-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-formatter-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-formatter
+
+  test-language-server:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-language-server-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-compiler-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-debug-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-defs-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-diagnostics-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-filesystem-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-formatter-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-lowering-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-parser-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-plugins-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-project-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-semantic-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-starknet-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-syntax-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-language-server-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-language-server
+
+  test-lowering:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-lowering-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-debug-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-defs-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-diagnostics-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-proc-macros-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-filesystem-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-parser-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-semantic-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-syntax-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-plugins-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-lowering-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-lowering
+
+  test-parser:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-parser-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-diagnostics-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-filesystem-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-syntax-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-syntax-codegen-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-parser-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-parser
+
+  test-plugins:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-plugins-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-defs-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-diagnostics-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-filesystem-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-parser-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-semantic-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-syntax-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-debug-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-test-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-plugins-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-plugins
+
+  test-proc-macros:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-proc-macros-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-debug-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-proc-macros-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-proc-macros
+
+  test-project:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-project-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-filesystem-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-project-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-project
+
+  test-runner:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-runner-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-compiler-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-casm-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-diagnostics-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-ap-change-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-gas-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-generator-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-to-casm-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-runner-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-runner
+
+  test-semantic:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-semantic-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-debug-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-defs-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-diagnostics-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-filesystem-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-parser-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-proc-macros-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-syntax-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-plugins-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-test-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-semantic-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-semantic
+
+  test-sierra:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-sierra
+
+  test-sierra-ap-change:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-ap-change-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-eq-solver-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-ap-change-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-sierra-ap-change
+
+  test-sierra-gas:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-gas-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-eq-solver-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-test-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-gas-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-sierra-gas
+
+  test-sierra-generator:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-generator-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-debug-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-defs-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-diagnostics-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-proc-macros-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-filesystem-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-lowering-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-parser-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-plugins-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-semantic-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-syntax-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-generator-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-sierra-generator
+
+  test-sierra-to-casm:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-to-casm-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-casm-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-ap-change-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-gas-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-to-casm-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-sierra-to-casm
+
+  test-starknet:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-starknet-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-compiler-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-casm-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-defs-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-diagnostics-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-filesystem-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-semantic-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-ap-change-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-generator-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-syntax-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-gas-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-to-casm-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-lowering-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-plugins-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-parser-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-test-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-starknet-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-starknet
+
+  test-syntax:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-syntax-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-debug-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-filesystem-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-syntax-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-syntax
+
+  test-syntax-codegen:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-syntax-codegen-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-syntax-codegen-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-syntax-codegen
+
+  test-test-runner:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-casm-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-compiler-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-debug-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-defs-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-diagnostics-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-filesystem-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-lowering-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-plugins-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-project-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-runner-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-semantic-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-generator-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-sierra-to-casm-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-starknet-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-syntax-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-test-runner-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-test-runner
+
+  test-test-utils:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-test-utils-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-test-utils
+
+  test-utils:
+    runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-utils-') ||
+            contains(needs.detect_crates_to_test.outputs.jobs, '-utils-test-only') }}
+    steps:
+      - *test_job_use_config
+      - run: |
+          cargo test -p cairo-lang-utils
 
   rustfmt:
     runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-rust-') }}
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
@@ -39,6 +476,8 @@ jobs:
   # Checks all .cairo files in the repo are formatted correctly.
   cairofmt:
     runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-cairo-') }}
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
@@ -48,6 +487,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: scripts/cairo_fmt.sh --check
 
+  # TODO(yg): what condition?
   # Checks all cairo corelib tests run correctly.
   cairotest:
     runs-on: ubuntu-latest
@@ -81,6 +521,8 @@ jobs:
 
   clippy:
     runs-on: ubuntu-latest
+    needs: detect_crates_to_test
+    if: ${{ contains(needs.detect_crates_to_test.outputs.jobs, '-rust-') }}
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
