@@ -1,5 +1,4 @@
 // TODO:
-// 0. Use real costs
 // 1. Other gas tokens
 // 2. AP
 // 3. Withdraw gas builtins.
@@ -58,16 +57,15 @@ pub fn compute_costs(
                 .expect("Program registry creation would have already failed.");
             core_libfunc_postcost(core_libfunc, &info_provider)
         }),
-        specific_cost_context: PostcostContext { get_ap_change_fn },
     };
+    let specific_cost_context = PostcostContext { get_ap_change_fn };
 
     for i in 0..program.statements.len() {
-        context.compute_wallet_at(&StatementIdx(i));
+        context.compute_wallet_at(&StatementIdx(i), &specific_cost_context);
     }
 
     let mut variable_values = VariableValues::default();
     for i in 0..program.statements.len() {
-        let specific_cost_context = &context.specific_cost_context;
         specific_cost_context.analyze_gas_statements(
             &context,
             &StatementIdx(i),
@@ -106,29 +104,24 @@ trait CostContextTrait<CostType> {
     fn wallet_at(&self, idx: &StatementIdx) -> CostType;
 }
 
-trait SpecificCostContextTrait {
-    type CostType: CostTypeTrait;
-
+trait SpecificCostContextTrait<CostType: CostTypeTrait> {
     /// Returns the required value for the wallet for each branch.
     fn get_branch_requirements(
         &self,
-        context: &dyn CostContextTrait<Self::CostType>,
+        wallet_at_fn: &mut dyn FnMut(&StatementIdx) -> CostType,
         idx: &StatementIdx,
         invocation: &Invocation,
         libfunc_cost: &[BranchCost],
-    ) -> Vec<Self::CostType>;
+    ) -> Vec<CostType>;
 }
 
-struct CostContext<'a, SpecificCostContext: SpecificCostContextTrait> {
+struct CostContext<'a, CostType> {
     program: &'a Program,
     get_cost_fn: &'a dyn Fn(&ConcreteLibfuncId) -> Vec<BranchCost>,
     /// The cost before executing a Sierra statement.
-    costs: UnorderedHashMap<StatementIdx, CostComputationStatus<SpecificCostContext::CostType>>,
-    specific_cost_context: SpecificCostContext,
+    costs: UnorderedHashMap<StatementIdx, CostComputationStatus<CostType>>,
 }
-impl<'a, SpecificCostContext: SpecificCostContextTrait>
-    CostContextTrait<SpecificCostContext::CostType> for CostContext<'a, SpecificCostContext>
-{
+impl<'a, CostType: CostTypeTrait> CostContextTrait<CostType> for CostContext<'a, CostType> {
     fn get_program(&self) -> &Program {
         self.program
     }
@@ -140,7 +133,7 @@ impl<'a, SpecificCostContext: SpecificCostContextTrait>
     /// Returns the required value in the wallet before executing statement `idx`.
     // TODO: There's an exception with branch_align - the function returns the wallet after the
     //   alignment.
-    fn wallet_at(&self, idx: &StatementIdx) -> SpecificCostContext::CostType {
+    fn wallet_at(&self, idx: &StatementIdx) -> CostType {
         match self.costs.get(idx) {
             Some(CostComputationStatus::Done(res)) => res.clone(),
             _ => {
@@ -150,11 +143,15 @@ impl<'a, SpecificCostContext: SpecificCostContextTrait>
     }
 }
 
-impl<'a, SpecificCostContext: SpecificCostContextTrait> CostContext<'a, SpecificCostContext> {
+impl<'a, CostType: CostTypeTrait> CostContext<'a, CostType> {
     /// Returns the required value in the wallet before executing statement `idx`.
     // TODO: There's an exception with branch_align - the function returns the wallet after the
     //   alignment.
-    fn compute_wallet_at(&mut self, idx: &StatementIdx) -> SpecificCostContext::CostType {
+    fn compute_wallet_at<SpecificCostContext: SpecificCostContextTrait<CostType>>(
+        &mut self,
+        idx: &StatementIdx,
+        specific_cost_context: &SpecificCostContext,
+    ) -> CostType {
         match self.costs.get(idx) {
             Some(CostComputationStatus::InProgress) => {
                 panic!("Found an unexpected cycle during cost computation.")
@@ -168,7 +165,7 @@ impl<'a, SpecificCostContext: SpecificCostContextTrait> CostContext<'a, Specific
         // Mark the statement's computation as in-progress.
         self.costs.insert(*idx, CostComputationStatus::InProgress);
 
-        let res = self.no_cache_compute_wallet_at(idx);
+        let res = self.no_cache_compute_wallet_at(idx, specific_cost_context);
 
         // Update the cache with the result.
         self.costs.insert(*idx, CostComputationStatus::Done(res.clone()));
@@ -179,19 +176,34 @@ impl<'a, SpecificCostContext: SpecificCostContextTrait> CostContext<'a, Specific
     /// Same as [wallet_at], except that the cache is not used.
     ///
     /// Calls [wallet_at] to get the wallet value of the following instructions.
-    fn no_cache_compute_wallet_at(&mut self, idx: &StatementIdx) -> SpecificCostContext::CostType {
+    fn no_cache_compute_wallet_at<SpecificCostContext: SpecificCostContextTrait<CostType>>(
+        &mut self,
+        idx: &StatementIdx,
+        specific_cost_context: &SpecificCostContext,
+    ) -> CostType {
         println!("Computing the cost of {idx}.");
         match &self.program.get_statement(idx).unwrap() {
             Statement::Return(_) => Default::default(),
             Statement::Invocation(invocation) => {
                 let libfunc_cost: Vec<BranchCost> = self.get_cost(&invocation.libfunc_id);
+                // {
                 // For each branch, compute the required value for the wallet.
-                let branch_requirements: Vec<SpecificCostContext::CostType> = self
-                    .specific_cost_context
-                    .get_branch_requirements(self, idx, invocation, &libfunc_cost);
+                // let mut wallet_at_fn = |statement_idx| {
+                //     self.compute_wallet_at(statement_idx, specific_cost_context)
+                // };
+                let branch_requirements: Vec<CostType> = specific_cost_context
+                    .get_branch_requirements(
+                        &mut |statement_idx| {
+                            self.compute_wallet_at(statement_idx, specific_cost_context)
+                        },
+                        idx,
+                        invocation,
+                        &libfunc_cost,
+                    );
+                // }
                 // The wallet value at the beginning of the statement is the maximal value
                 // required by all the branches.
-                SpecificCostContext::CostType::max(branch_requirements.into_iter())
+                CostType::max(branch_requirements.into_iter())
             }
         }
     }
@@ -201,13 +213,11 @@ struct PostcostContext<'a> {
     get_ap_change_fn: &'a dyn Fn(&StatementIdx) -> usize,
 }
 
-impl<'a> SpecificCostContextTrait for PostcostContext<'a> {
-    type CostType = i32;
-
+impl<'a> SpecificCostContextTrait<i32> for PostcostContext<'a> {
     /// Returns the required value for the wallet for each branch.
     fn get_branch_requirements(
         &self,
-        context: &dyn CostContextTrait<Self::CostType>,
+        wallet_at_fn: &mut dyn FnMut(&StatementIdx) -> i32,
         idx: &StatementIdx,
         invocation: &Invocation,
         libfunc_cost: &[BranchCost],
@@ -225,7 +235,7 @@ impl<'a> SpecificCostContextTrait for PostcostContext<'a> {
                         }
                     }
                     BranchCost::FunctionCall { const_cost, function } => {
-                        context.wallet_at(&function.entry_point) + const_cost.cost()
+                        wallet_at_fn(&function.entry_point) + const_cost.cost()
                     }
                     BranchCost::WithdrawGas { const_cost, success, with_builtins: _ } => {
                         let cost = const_cost.cost();
@@ -239,7 +249,7 @@ impl<'a> SpecificCostContextTrait for PostcostContext<'a> {
                     }
                     BranchCost::RedepositGas => todo!(),
                 };
-                let future_wallet_value = context.wallet_at(&idx.next(&branch_info.target));
+                let future_wallet_value = wallet_at_fn(&idx.next(&branch_info.target));
                 branch_cost + future_wallet_value
             })
             .collect()
@@ -249,7 +259,7 @@ impl<'a> SpecificCostContextTrait for PostcostContext<'a> {
 impl<'a> PostcostContext<'a> {
     fn analyze_gas_statements(
         &self,
-        context: &CostContext<Self>,
+        context: &CostContext<i32>,
         idx: &StatementIdx,
         variable_values: &mut VariableValues,
     ) {
@@ -257,15 +267,19 @@ impl<'a> PostcostContext<'a> {
             return;
         };
         let libfunc_cost: Vec<BranchCost> = context.get_cost(&invocation.libfunc_id);
-        let branch_requirements: Vec<i32> =
-            self.get_branch_requirements(context, idx, invocation, &libfunc_cost);
+        let branch_requirements: Vec<i32> = self.get_branch_requirements(
+            &mut |statement_idx| context.wallet_at(statement_idx),
+            idx,
+            invocation,
+            &libfunc_cost,
+        );
 
         let wallet_value = context.wallet_at(idx);
 
         if invocation.branches.len() > 1 {
+            // TODO: zip_eq3?
             for ((branch_info, branch_cost), branch_requirement) in
                 zip_eq(zip_eq(&invocation.branches, &libfunc_cost), &branch_requirements)
-            // TODO: zip_eq3?
             {
                 let future_wallet_value = context.wallet_at(&idx.next(&branch_info.target));
                 if let BranchCost::WithdrawGas { const_cost, success: true, with_builtins: _ } =
@@ -282,19 +296,15 @@ impl<'a> PostcostContext<'a> {
                     //     // really small?
                     //     std::cmp::max(-amount, 0)
                     // );
-                    assert!(
-                        variable_values
-                            .insert((idx.clone(), CostTokenType::Const), std::cmp::max(amount, 0))
-                            .is_none()
-                    );
-                    assert!(
-                        variable_values
-                            .insert(
-                                (idx.next(&branch_info.target), CostTokenType::Const),
-                                std::cmp::max(-amount, 0),
-                            )
-                            .is_none()
-                    );
+                    assert!(variable_values
+                        .insert((idx.clone(), CostTokenType::Const), std::cmp::max(amount, 0))
+                        .is_none());
+                    assert!(variable_values
+                        .insert(
+                            (idx.next(&branch_info.target), CostTokenType::Const),
+                            std::cmp::max(-amount, 0),
+                        )
+                        .is_none());
                 } else {
                     // TODO: Consider checking this is indeed branch align.
                     // println!(
@@ -302,14 +312,12 @@ impl<'a> PostcostContext<'a> {
                     //     idx.next(&branch_info.target),
                     //     wallet_value - branch_requirement
                     // );
-                    assert!(
-                        variable_values
-                            .insert(
-                                (idx.next(&branch_info.target), CostTokenType::Const),
-                                (wallet_value - branch_requirement) as i64,
-                            )
-                            .is_none()
-                    );
+                    assert!(variable_values
+                        .insert(
+                            (idx.next(&branch_info.target), CostTokenType::Const),
+                            (wallet_value - branch_requirement) as i64,
+                        )
+                        .is_none());
                 }
             }
         }
