@@ -36,11 +36,13 @@ use cairo_lang_sierra::extensions::uint128::Uint128Concrete;
 use cairo_lang_sierra::extensions::ConcreteLibfunc;
 use cairo_lang_sierra::ids::ConcreteTypeId;
 use cairo_lang_sierra::program::Function;
+use cairo_lang_utils::collection_arithmetics::{add_maps, sub_maps};
+use cairo_lang_utils::ordered_hash_map::OrderedHashMap;
 use itertools::{chain, Itertools};
 
 use crate::starknet_libfunc_cost_base::starknet_libfunc_cost_base;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ConstCost {
     pub steps: i32,
     pub holes: i32,
@@ -138,6 +140,27 @@ pub trait InvocationCostInfoProvider {
     fn ap_change_var_value(&self) -> usize;
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PreCost(pub OrderedHashMap<CostTokenType, i32>);
+
+/// Adds two [ConstCost] instances.
+impl std::ops::Add for PreCost {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        PreCost(add_maps(self.0, rhs.0))
+    }
+}
+
+/// Subtracts two [ConstCost] instances.
+impl std::ops::Sub for PreCost {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        PreCost(sub_maps(self.0, rhs.0))
+    }
+}
+
 /// Returns a precost value for a libfunc - the cost of non-step tokens.
 /// This is a helper function to implement costing both for creating
 /// gas equations and getting actual gas cost after having a solution.
@@ -207,7 +230,7 @@ impl<InfoProvider: InvocationCostInfoProvider> ComputeCostInfoProvider
 #[derive(Clone)]
 pub enum BranchCost {
     /// A constant cost.
-    Constant(ConstCost),
+    Constant { const_cost: ConstCost, pre_cost: PreCost },
     /// A cost of a function call.
     FunctionCall { const_cost: ConstCost, function: Function },
     /// The cost of the `branch_align` libfunc.
@@ -221,7 +244,7 @@ pub enum BranchCost {
 /// Converts [ConstCost] into [BranchCost].
 impl From<ConstCost> for BranchCost {
     fn from(value: ConstCost) -> Self {
-        BranchCost::Constant(value)
+        BranchCost::Constant { const_cost: value, pre_cost: PreCost::default() }
     }
 }
 
@@ -233,12 +256,17 @@ pub fn core_libfunc_postcost(
     let steps = |value| ConstCost { steps: value, ..Default::default() };
     let holes = |value| ConstCost { holes: value, ..Default::default() };
     let range_checks = |value| ConstCost { range_checks: value, ..Default::default() };
+    let builtin =
+        |token_type| PreCost(OrderedHashMap::from_iter((vec![(token_type, 1)]).into_iter()));
     match libfunc {
         FunctionCall(FunctionCallConcreteLibfunc { function, .. }) => {
             vec![BranchCost::FunctionCall { const_cost: steps(2), function: function.clone() }]
         }
         Bitwise(_) => {
-            vec![steps(2).into()]
+            vec![BranchCost::Constant {
+                const_cost: steps(2),
+                pre_cost: builtin(CostTokenType::Bitwise),
+            }]
         }
         Bool(libfunc) => match libfunc {
             BoolConcreteLibfunc::And(_) => vec![steps(0).into()],
@@ -261,7 +289,10 @@ pub fn core_libfunc_postcost(
             EcConcreteLibfunc::StateFinalize(_) => vec![steps(12).into(), steps(6).into()],
             EcConcreteLibfunc::StateInit(_) => vec![steps(8).into()],
             EcConcreteLibfunc::StateAddMul(_) => {
-                vec![steps(5).into()]
+                vec![BranchCost::Constant {
+                    const_cost: steps(5),
+                    pre_cost: builtin(CostTokenType::EcOp),
+                }]
             }
             EcConcreteLibfunc::PointFromX(_) => vec![
                 (steps(14) + range_checks(3)).into(), // Success.
@@ -394,10 +425,18 @@ pub fn core_libfunc_postcost(
             }
         },
         Pedersen(libfunc) => match libfunc {
-            PedersenConcreteLibfunc::PedersenHash(_) => vec![steps(2).into()],
+            PedersenConcreteLibfunc::PedersenHash(_) => {
+                vec![BranchCost::Constant {
+                    const_cost: steps(2),
+                    pre_cost: builtin(CostTokenType::Pedersen),
+                }]
+            }
         },
         Poseidon(libfunc) => match libfunc {
-            PoseidonConcreteLibfunc::HadesPermutation(_) => vec![steps(3).into()],
+            PoseidonConcreteLibfunc::HadesPermutation(_) => vec![BranchCost::Constant {
+                const_cost: steps(3).into(),
+                pre_cost: builtin(CostTokenType::Poseidon),
+            }],
         },
         BuiltinCost(builtin_libfunc) => match builtin_libfunc {
             BuiltinCostConcreteLibfunc::BuiltinWithdrawGas(_) => {
@@ -444,7 +483,7 @@ pub fn core_libfunc_postcost_wrapper<
     let res = core_libfunc_postcost(libfunc, &ComputeCostInfoProviderWrapper { info_provider });
     res.into_iter()
         .map(|cost| match cost {
-            BranchCost::Constant(const_cost) => ops.const_cost(const_cost),
+            BranchCost::Constant { const_cost, pre_cost: _ } => ops.const_cost(const_cost),
             BranchCost::FunctionCall { const_cost, function } => {
                 let func_content_cost = ops.function_token_cost(&function, CostTokenType::Const);
                 ops.add(ops.const_cost(const_cost), func_content_cost)
@@ -763,7 +802,11 @@ fn felt252_libfunc_cost(libfunc: &Felt252Concrete) -> Vec<ConstCost> {
                 Felt252BinaryOperationConcrete::WithVar(op) => op.operator,
                 Felt252BinaryOperationConcrete::WithConst(op) => op.operator,
             };
-            if op == Felt252BinaryOperator::Div { vec![steps(5)] } else { vec![steps(0)] }
+            if op == Felt252BinaryOperator::Div {
+                vec![steps(5)]
+            } else {
+                vec![steps(0)]
+            }
         }
         Felt252Concrete::Const(_) => vec![steps(0)],
         Felt252Concrete::IsZero(_) => {
